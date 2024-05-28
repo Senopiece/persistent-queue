@@ -15,7 +15,7 @@ class AtomicValue:
 
     def _seek_to_second(self):
         self._file.seek(self._offset + 1 + self._size)
-    
+
     def _seek_to_first(self):
         self._file.seek(self._offset + 1)
 
@@ -31,7 +31,7 @@ class AtomicValue:
         self._cached_value = value
 
         return value
-    
+
     def read(self):
         return self._cached_value
 
@@ -97,7 +97,7 @@ class PersistentQueue:
         elem_size: int,  # in bytes
     ) -> None:
         # TODO: dynamic address_size depending on elem_size and max_file_size
-        self._file = open(filename, 'r+b' if os.path.isfile(filename) else 'w+b')
+        self._file = open(filename, "r+b" if os.path.isfile(filename) else "w+b")
         self._address_size = 4  # supports up to ~100 GB max file size
         self._metadata_region = PersistentQueueMetadataRegion(
             self._file,
@@ -152,17 +152,17 @@ class PersistentQueue:
         self._file.write(value)
 
         self._write_tail(old_tail + 1)
-        
+
         self._file.flush()
         os.fsync(self._file.fileno())
-    
+
     @property
     def head(self):
         assert not self.is_empty
 
         self._file.seek(self._metadata_region.size + self._head * self._elem_size)
         return self._file.read(self._elem_size)
-    
+
     def pop(self):
         assert not self.is_empty
 
