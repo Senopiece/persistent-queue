@@ -8,6 +8,6 @@ setup(
     author_email="nabuki@vk.com",
     packages=find_packages(),
     package_data={
-        "persistent_queue": ["py.typed", "*.pyi"],
+        "persistent_queue": ["py.typed", "__init__.pyi"],
     },
 )
