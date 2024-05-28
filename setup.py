@@ -7,4 +7,7 @@ setup(
     author="Vitaly Mahonin",
     author_email="nabuki@vk.com",
     py_modules=["persistent_queue"],
+    package_data={
+        "": ["*.pyi"],
+    },
 )
