@@ -16,6 +16,7 @@ class AtomicValue:
         self._offset = offset
         self._size = size
         self._raw_read()
+        self._E = (0).to_bytes(self._size)
 
     def _read_selector(self) -> int:
         self._file.seek(self._offset)
@@ -27,30 +28,45 @@ class AtomicValue:
     def _seek_to_first(self) -> None:
         self._file.seek(self._offset + 1)
 
-    def _raw_read(self) -> int:
+    def _raw_read(self) -> int | None:
         selector = self._read_selector()
 
-        if selector != 0:
-            self._seek_to_second()
+        if selector not in (1, 2):
+            value = None
+        else:
+            if selector == 2:
+                self._seek_to_second()
+            else:
+                pass  # already at the first
 
-        value = int.from_bytes(self._file.read(self._size))
+            value = int.from_bytes(self._file.read(self._size))
 
         self._cached_selector = selector
         self._cached_value = value
 
         return value
 
-    def read(self) -> int:
+    def read(self) -> int | None:
         return self._cached_value
 
-    def write(self, value: int) -> None:
+    def write(self, value: int | None) -> None:
         """Atomic operation"""
-        new_selector = 0
 
-        if self._cached_selector == 0:
-            new_selector = 1
+        if value is None:
+            # write invalid selector
+            self._file.seek(self._offset)
+            self._file.write(self._E)
+
+            self._cached_selector = 0
+            self._cached_value = None
+
+            return
+
+        if self._cached_selector == 1:
+            new_selector = 2
             self._seek_to_second()
         else:
+            new_selector = 1
             self._seek_to_first()
 
         self._file.write(value.to_bytes(self._size))
@@ -76,11 +92,11 @@ class PersistentQueueMetadataRegion:
         self._tail_section = AtomicValue(file, self._head_section.size, address_size)
 
     @property
-    def head(self) -> int:
+    def head(self) -> int | None:
         return self._head_section.read()
 
     @property
-    def tail(self) -> int:
+    def tail(self) -> int | None:
         return self._tail_section.read()
 
     @property
@@ -88,7 +104,7 @@ class PersistentQueueMetadataRegion:
         """In bytes"""
         return self._head_section.size + self._tail_section.size
 
-    def write_head(self, value: int) -> None:
+    def write_head(self, value: int | None) -> None:
         """Atomic operation"""
         self._head_section.write(value)
 
@@ -113,7 +129,6 @@ class PersistentQueue:
         )
         self._elem_size = elem_size
         self._capacity = (max_file_size - self._metadata_region.size) // elem_size
-        self._mod = self._capacity + 1
 
         if self._capacity <= 0:
             raise TooSmallBounds()
@@ -130,22 +145,25 @@ class PersistentQueue:
         self._file.close()
 
     @property
-    def _head(self) -> int:
+    def _head(self) -> int | None:
         return self._metadata_region.head
 
     @property
-    def _tail(self) -> int:
-        return (self._metadata_region.tail + 1) % self._mod
+    def _tail(self) -> int | None:
+        return self._metadata_region.tail
 
-    def _write_head(self, v: int) -> None:
-        self._metadata_region.write_head(v % self._mod)
+    def _write_head(self, v: int | None) -> None:
+        self._metadata_region.write_head(None if v is None else v % self._capacity)
 
     def _write_tail(self, v: int) -> None:
-        self._metadata_region.write_tail((v - 1) % self._mod)
+        self._metadata_region.write_tail(v % self._capacity)
 
     @property
     def length(self) -> int:
-        return (self._tail - 1 - self._head) % self._mod
+        if self._tail is None or self._head is None:
+            return 0
+
+        return ((self._tail - self._head) % self._capacity) + 1
 
     @property
     def is_empty(self) -> bool:
@@ -158,26 +176,35 @@ class PersistentQueue:
         if self._capacity <= self.length:
             raise InsufficientCapacity()
 
-        old_tail = self._tail
+        if self._tail is None or self._head is None:
+            new_tail = self._head or 0
+        else:
+            new_tail = (self._tail + 1) % self._capacity
 
-        self._file.seek(self._metadata_region.size + old_tail * self._elem_size)
+        if self._head is None:
+            self._write_head(new_tail)
+
+        self._file.seek(self._metadata_region.size + new_tail * self._elem_size)
         self._file.write(value)
 
-        self._write_tail(old_tail + 1)
+        self._write_tail(new_tail)
 
         self._file.flush()
         os.fsync(self._file.fileno())
 
     @property
     def head(self) -> bytes:
-        if self.is_empty:
+        if self._tail is None or self._head is None:
             raise QueueIsEmpty()
 
         self._file.seek(self._metadata_region.size + self._head * self._elem_size)
         return self._file.read(self._elem_size)
 
     def pop(self) -> None:
-        if self.is_empty:
+        if self._tail is None or self._head is None:
             raise QueueIsEmpty()
 
-        self._write_head(self._head + 1)
+        if self.length == 1:
+            self._write_head(None)
+        else:
+            self._write_head(self._head + 1)
