@@ -1,6 +1,14 @@
 import os
 from typing import IO
 
+from persistent_queue.exceptions import (
+    IncorrectValueLength,
+    InsufficientCapacity,
+    QueueIsEmpty,
+    TooBigBounds,
+    TooSmallBounds,
+)
+
 
 class AtomicValue:
     def __init__(self, file: IO[bytes], offset: int, size: int) -> None:
@@ -106,12 +114,13 @@ class PersistentQueue:
         self._elem_size = elem_size
         self._capacity = (max_file_size - self._metadata_region.size) // elem_size
         self._mod = self._capacity + 1
-        assert (
-            self._capacity > 0
-        ), "too small bounds, try increasing max_file_size or decreasing elem_size"
-        assert (
-            pow(256, self._address_size) >= self._capacity
-        ), "too big bounds, try decreasing max_file_size or increasing elem_size"
+
+        if self._capacity <= 0:
+            raise TooSmallBounds()
+
+        # TODO: remove after adding dynamic address_size
+        if self._capacity > pow(256, self._address_size):
+            raise TooBigBounds()
 
     @property
     def capacity(self) -> int:
@@ -143,8 +152,11 @@ class PersistentQueue:
         return self.length == 0
 
     def put(self, value: bytes) -> None:
-        assert len(value) == self._elem_size, "Incorrect value length"
-        assert self._capacity > self.length, "Insufficient capacity"
+        if len(value) != self._elem_size:
+            raise IncorrectValueLength()
+
+        if self._capacity <= self.length:
+            raise InsufficientCapacity()
 
         old_tail = self._tail
 
@@ -158,12 +170,14 @@ class PersistentQueue:
 
     @property
     def head(self) -> bytes:
-        assert not self.is_empty
+        if self.is_empty:
+            raise QueueIsEmpty()
 
         self._file.seek(self._metadata_region.size + self._head * self._elem_size)
         return self._file.read(self._elem_size)
 
     def pop(self) -> None:
-        assert not self.is_empty
+        if self.is_empty:
+            raise QueueIsEmpty()
 
         self._write_head(self._head + 1)
