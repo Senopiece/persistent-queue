@@ -3,7 +3,6 @@ from typing import IO
 
 from persistent_queue.exceptions import (
     IncorrectValueLength,
-    InsufficientCapacity,
     QueueIsEmpty,
     TooBigBounds,
     TooSmallBounds,
@@ -169,17 +168,23 @@ class PersistentQueue:
     def is_empty(self) -> bool:
         return self.length == 0
 
+    @property
+    def is_full(self) -> bool:
+        return self.length == self._capacity
+
     def put(self, value: bytes) -> None:
         if len(value) != self._elem_size:
             raise IncorrectValueLength()
-
-        if self._capacity <= self.length:
-            raise InsufficientCapacity()
 
         if self._tail is None or self._head is None:
             new_tail = self._head or 0
         else:
             new_tail = (self._tail + 1) % self._capacity
+
+            # rewrite the head when not enough space
+            # NOTE: to prevent this check is_full before calling put
+            if new_tail == self._head:  # self.length == self._capacity
+                self._write_head(new_tail + 1)
 
         if self._head is None:
             self._write_head(new_tail)

@@ -20,10 +20,6 @@ class CapacityError(PersistentQueueException):
     pass
 
 
-class InsufficientCapacity(CapacityError):
-    "Insufficient capacity"
-
-
 class QueueIsEmpty(CapacityError):
     "Queue is empty"
 
