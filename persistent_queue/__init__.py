@@ -119,6 +119,10 @@ class PersistentQueue:
         max_file_size: int,  # in bytes
         elem_size: int,  # in bytes
     ) -> None:
+        directory = os.path.dirname(filename)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
         # TODO: dynamic address_size depending on elem_size and max_file_size
         self._file = open(filename, "r+b" if os.path.isfile(filename) else "w+b")
         self._address_size = 4  # supports up to ~100 GB max file size
@@ -141,7 +145,8 @@ class PersistentQueue:
         return self._capacity
 
     def __del__(self) -> None:
-        self._file.close()
+        if self._file:
+            self._file.close()
 
     @property
     def _head(self) -> int | None:
