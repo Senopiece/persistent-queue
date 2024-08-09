@@ -1,5 +1,6 @@
 import os
 from typing import IO
+import weakref
 
 from persistent_queue.exceptions import (
     IncorrectValueLength,
@@ -120,11 +121,13 @@ class PersistentQueue:
         elem_size: int,  # in bytes
     ) -> None:
         directory = os.path.dirname(filename)
-        if not os.path.exists(directory):
+        if not os.path.exists(directory) and directory != "":
             os.makedirs(directory)
 
         # TODO: dynamic address_size depending on elem_size and max_file_size
         self._file = open(filename, "r+b" if os.path.isfile(filename) else "w+b")
+        weakref.finalize(self, self._dispose)
+
         self._address_size = 4  # supports up to ~100 GB max file size
         self._metadata_region = PersistentQueueMetadataRegion(
             self._file,
@@ -144,17 +147,19 @@ class PersistentQueue:
     def capacity(self) -> int:
         return self._capacity
 
-    def __del__(self) -> None:
+    def _dispose(self) -> None:
         if self._file:
             self._file.close()
 
+    # head - where to pop next, empty if None
     @property
     def _head(self) -> int | None:
         return self._metadata_region.head
 
+    # tail - where to add next, full if tail=head
     @property
-    def _tail(self) -> int | None:
-        return self._metadata_region.tail
+    def _tail(self) -> int:
+        return self._metadata_region.tail or 0
 
     def _write_head(self, v: int | None) -> None:
         self._metadata_region.write_head(None if v is None else v % self._capacity)
@@ -164,10 +169,13 @@ class PersistentQueue:
 
     @property
     def length(self) -> int:
-        if self._tail is None or self._head is None:
+        if self._head is None:
             return 0
 
-        return ((self._tail - self._head) % self._capacity) + 1
+        if self._tail == self._head:
+            return self._capacity
+
+        return (self._tail - self._head) % self._capacity
 
     @property
     def is_empty(self) -> bool:
@@ -181,40 +189,63 @@ class PersistentQueue:
         if len(value) != self._elem_size:
             raise IncorrectValueLength()
 
-        if self._tail is None or self._head is None:
-            new_tail = self._head or 0
-        else:
-            new_tail = (self._tail + 1) % self._capacity
-
-            # rewrite the head when not enough space
-            # NOTE: to prevent this check is_full before calling put
-            if new_tail == self._head:  # self.length == self._capacity
-                self._write_head(new_tail + 1)
+        def write():
+            self._file.seek(self._metadata_region.size + self._tail * self._elem_size)
+            self._file.write(value)
+            self._write_tail(self._tail + 1)
 
         if self._head is None:
-            self._write_head(new_tail)
+            old_tail = self._tail
+            write()
+            self._write_head(old_tail)
 
-        self._file.seek(self._metadata_region.size + new_tail * self._elem_size)
-        self._file.write(value)
+        elif self._head == self._tail:
+            self._write_head(self._head + 1)
+            write()
 
-        self._write_tail(new_tail)
+        else:
+            write()
 
         self._file.flush()
         os.fsync(self._file.fileno())
 
-    @property
-    def head(self) -> bytes:
-        if self._tail is None or self._head is None:
+    def _ensure_valid_pop_count(self, count: int):
+        if count < 1:
+            raise ValueError(
+                f"Invalid count requested: required count >= 1 but got {count}"
+            )
+        return min(self.length, count)
+
+    def head(self, count: int = 1) -> bytes:
+        count = self._ensure_valid_pop_count(count)
+
+        if count == 0:
+            return b""
+
+        res = b""
+
+        head = self._head
+        assert head is not None
+
+        self._file.seek(self._metadata_region.size + head * self._elem_size)
+
+        if wrapped := head + count - self._capacity > 0:
+            res += self._file.read((count - wrapped) * self._elem_size)
+
+            self._file.seek(self._metadata_region.size)
+            res += self._file.read(wrapped * self._elem_size)
+
+        else:
+            res += self._file.read(count * self._elem_size)
+
+        return res
+
+    def pop(self, count: int = 1) -> None:
+        count = self._ensure_valid_pop_count(count)
+
+        if self._head is None:
             raise QueueIsEmpty()
-
-        self._file.seek(self._metadata_region.size + self._head * self._elem_size)
-        return self._file.read(self._elem_size)
-
-    def pop(self) -> None:
-        if self._tail is None or self._head is None:
-            raise QueueIsEmpty()
-
-        if self.length == 1:
+        elif (self._head + count) % self._capacity == self._tail:
             self._write_head(None)
         else:
-            self._write_head(self._head + 1)
+            self._write_head(self._head + count)
