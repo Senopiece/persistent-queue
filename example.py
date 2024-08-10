@@ -2,7 +2,8 @@ from persistent_queue import PersistentQueue
 
 
 q = PersistentQueue("pq", 20, 1)
-print(q.capacity)
+print("capacity:", q.capacity)
+print("len:", q.length)
 
 while True:
     la = input().split()

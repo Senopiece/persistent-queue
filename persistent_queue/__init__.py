@@ -83,7 +83,8 @@ class AtomicValue:
         return 1 + 2 * self._size
 
 
-# TODO: can be rewritten to use 3*(n + 1) instead of 1 + 4*8*n bits
+# TODO: can use less memory if organized like this
+#   [selector (head, tail): ab, ac, bc, ba, ca, cb, aN, bN, cN][a][b][c]
 class PersistentQueueMetadataRegion:
     def __init__(self, file: IO[bytes], address_size: int) -> None:
         self._file = file
