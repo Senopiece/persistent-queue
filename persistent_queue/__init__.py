@@ -148,6 +148,10 @@ class PersistentQueue:
     def capacity(self) -> int:
         return self._capacity
 
+    @property
+    def elem_size(self) -> int:
+        return self._elem_size
+
     def _dispose(self) -> None:
         if self._file:
             self._file.close()
